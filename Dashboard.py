@@ -36,6 +36,16 @@ if mancity_row.empty:
 else:
     mancity_row = mancity_row.iloc[0]
 
+# --- FIX: ensure CountryRank exists ---------------------------------
+if "CountryRank" not in df.columns:
+    # rank teams within each country by Elo (1 = best in country)
+    df["CountryRank"] = df.groupby("Country")["Elo"].rank(
+        ascending=False, method="dense"
+    )
+    # refresh Man City row with the new column
+    mancity_row = df[df["Club"] == "Man City"].iloc[0]
+# --------------------------------------------------------------------
+
 # Display metrics
 col1, col2, col3, col4 = st.columns(4)
 with col1:
