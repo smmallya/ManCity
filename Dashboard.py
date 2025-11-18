@@ -5,40 +5,82 @@ from datetime import datetime, timedelta
 import math
 
 # ------------------------------------------------------------------
-# Page + simple "modern" styling
+# Page + Man City styling
 # ------------------------------------------------------------------
 st.set_page_config(page_title="Man City Win Probability", layout="wide")
 
 st.markdown(
     """
     <style>
-    /* Make main background lighter and content tighter */
+    :root {
+        --city-blue: #6CABDD;
+        --city-navy: #00285E;
+        --city-light: #f3f7fb;
+    }
+
     .block-container {
         max-width: 1000px;
         padding-top: 2rem;
         padding-bottom: 4rem;
     }
-    /* Metric row spacing */
-    .stMetric {
-        background: #f9fafb;
-        padding: 0.75rem 1rem;
-        border-radius: 0.75rem;
-        box-shadow: 0 1px 3px rgba(15,23,42,0.08);
+
+    .city-hero {
+        background: linear-gradient(90deg, var(--city-navy), var(--city-blue));
+        border-radius: 1.25rem;
+        padding: 1.5rem 1.75rem;
+        margin-bottom: 1.5rem;
+        color: white;
+        box-shadow: 0 18px 35px rgba(0,0,0,0.15);
     }
-    /* Section headers */
+
+    .city-hero-title {
+        font-size: 1.8rem;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+    }
+
+    .city-hero-subtitle {
+        font-size: 0.95rem;
+        opacity: 0.95;
+    }
+
+    .stMetric {
+        background: white;
+        padding: 0.75rem 1rem;
+        border-radius: 0.9rem;
+        box-shadow: 0 2px 8px rgba(15,23,42,0.08);
+    }
+
     h2, h3 {
         margin-top: 1.75rem !important;
+    }
+
+    /* Make dataframes feel more card-like */
+    .stDataFrame {
+        background: white;
+        border-radius: 0.9rem;
+        box-shadow: 0 1px 6px rgba(15,23,42,0.06);
+        padding: 0.25rem 0.25rem 0.5rem 0.25rem;
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.title("🔵 Manchester City Win Probability Dashboard 2025-26")
-st.markdown("Live Elo rating from **clubelo.com** • Updates after every match")
+st.markdown(
+    """
+    <div class="city-hero">
+        <div class="city-hero-title">🔵 Manchester City Win Probability Dashboard 2025-26</div>
+        <div class="city-hero-subtitle">
+            Live Elo rating from <strong>clubelo.com</strong> • Updated after every match • Built for City fans
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ------------------------------------------------------------------
-# Existing Elo fetch (unchanged logic)
+# Elo fetch (unchanged logic)
 # ------------------------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner="Fetching latest Elo data...")
 def get_latest_elo():
@@ -69,7 +111,7 @@ if mancity_row.empty:
 else:
     mancity_row = mancity_row.iloc[0]
 
-# Ensure CountryRank exists (fix for earlier error)
+# Ensure CountryRank exists
 if "CountryRank" not in df.columns:
     df["CountryRank"] = df.groupby("Country")["Elo"].rank(
         ascending=False, method="dense"
@@ -87,18 +129,23 @@ with col2:
 with col3:
     st.metric("England Rank", f"#{int(mancity_row['CountryRank'])}")
 with col4:
-    st.metric("Competition", mancity_row['Level'])
+    st.metric("Competition Level", mancity_row['Level'])
 
 # ------------------------------------------------------------------
 # Premier League top 10
 # ------------------------------------------------------------------
 st.subheader("Premier League Top 10 (Elo)")
+
 epl = df[df["Country"] == "ENG"].sort_values("Elo", ascending=False).head(10)
 epl_display = epl[["Rank", "Club", "Elo"]].copy()
 epl_display["Club"] = epl_display["Club"].replace("ManCity", "Manchester City")
-st.dataframe(epl_display.reset_index(drop=True), hide_index=True, use_container_width=True)
 
-# Optional: small bar chart for a more modern feel
+st.dataframe(
+    epl_display.reset_index(drop=True),
+    hide_index=True,
+    use_container_width=True,
+)
+
 st.caption("Relative strength of top 10 by Elo")
 st.bar_chart(
     epl_display.set_index("Club")["Elo"],
@@ -110,15 +157,14 @@ st.bar_chart(
 # ------------------------------------------------------------------
 leader_elo = df[df["Country"] == "ENG"].iloc[0]["Elo"]
 title_prob = 1 / (1 + 10 ** ((leader_elo - mancity_row["Elo"]) / 100))
+
 st.metric("Estimated Premier League Title Probability", f"{title_prob:.1%}")
 
 # ------------------------------------------------------------------
-# Upcoming matches + Elo-based predictions (using football-data.org)
+# Upcoming matches + Elo-based predictions (football-data.org)
 # ------------------------------------------------------------------
-
 st.subheader("Next Manchester City Matches – Elo-based Win Probability")
 
-# Map football-data.org team names to ClubElo names
 CLUB_NAME_MAP = {
     "Manchester City FC": "Man City",
     "Arsenal FC": "Arsenal",
@@ -131,7 +177,7 @@ CLUB_NAME_MAP = {
     "Brighton & Hove Albion FC": "Brighton",
     "Crystal Palace FC": "Crystal Palace",
     "AFC Bournemouth": "Bournemouth",
-    # add more here if needed
+    # extend if you want more mapped
 }
 
 def get_next_city_matches():
@@ -145,7 +191,7 @@ def get_next_city_matches():
         return None, "no_key"
 
     url = "https://api.football-data.org/v4/teams/65/matches"  # 65 = Man City
-    params = {"status": "SCHEDULED", "limit": 5}
+    params = {"status": "SCHEDULED", "limit": 20}
     headers = {"X-Auth-Token": api_key}
     try:
         r = requests.get(url, headers=headers, params=params, timeout=10)
@@ -161,7 +207,6 @@ def get_next_city_matches():
     for m in matches:
         utc_date = m["utcDate"]
         dt = datetime.fromisoformat(utc_date.replace("Z", "+00:00"))
-        # show in local time-ish (you can adjust to timezone if needed)
         date_str = dt.strftime("%Y-%m-%d %H:%M")
 
         home = m["homeTeam"]["name"]
@@ -216,17 +261,68 @@ def get_next_city_matches():
 
 fixtures_df, fixtures_err = get_next_city_matches()
 
+def show_fixtures_table(df_to_show, label=""):
+    if df_to_show is None or df_to_show.empty:
+        st.write(f"No fixtures for {label} yet.")
+    else:
+        st.dataframe(
+            df_to_show.sort_values("Date (UTC)").reset_index(drop=True),
+            hide_index=True,
+            use_container_width=True,
+        )
+
 if fixtures_df is not None:
-    st.dataframe(
-        fixtures_df,
-        hide_index=True,
-        use_container_width=True,
-    )
+    # Tabs for main competitions: PL, UCL, FA Cup, League Cup, Other
+    main_comps = [
+        "Premier League",
+        "UEFA Champions League",
+        "FA Cup",
+        "League Cup",           # football-data may use EFL Cup / League Cup naming
+        "EFL Cup",
+    ]
+
+    tab_labels = ["All fixtures"]
+    present = set(fixtures_df["Competition"].unique())
+
+    comp_tabs = []
+    for name in main_comps:
+        if name in present:
+            tab_labels.append(name)
+            comp_tabs.append(name)
+
+    if len(present - set(comp_tabs)) > 0:
+        tab_labels.append("Other")
+
+    tabs = st.tabs(tab_labels)
+
+    # All fixtures
+    with tabs[0]:
+        show_fixtures_table(fixtures_df, "all competitions")
+
+    # Individual competitions
+    tab_index = 1
+    for comp_name in comp_tabs:
+        with tabs[tab_index]:
+            show_fixtures_table(
+                fixtures_df[fixtures_df["Competition"] == comp_name],
+                comp_name,
+            )
+        tab_index += 1
+
+    # Other competitions
+    if "Other" in tab_labels:
+        with tabs[-1]:
+            other_df = fixtures_df[
+                ~fixtures_df["Competition"].isin(comp_tabs)
+            ]
+            show_fixtures_table(other_df, "other competitions")
+
 else:
     if fixtures_err == "no_key":
         st.info(
-            "To see upcoming fixtures and win probabilities, add a free API key from "
-            "football-data.org to Streamlit secrets as `FOOTBALL_DATA_API_KEY`."
+            "To see upcoming fixtures and win probabilities across all tournaments, "
+            "add a free API key from football-data.org to Streamlit secrets as "
+            "`FOOTBALL_DATA_API_KEY`."
         )
     elif fixtures_err == "no_matches":
         st.info("No upcoming Manchester City matches found in the fixture API.")
