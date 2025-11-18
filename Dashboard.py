@@ -55,7 +55,6 @@ st.markdown(
         margin-top: 1.75rem !important;
     }
 
-    /* Make dataframes feel more card-like */
     .stDataFrame {
         background: white;
         border-radius: 0.9rem;
@@ -80,7 +79,7 @@ st.markdown(
 )
 
 # ------------------------------------------------------------------
-# Elo fetch (unchanged logic)
+# Elo fetch
 # ------------------------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner="Fetching latest Elo data...")
 def get_latest_elo():
@@ -119,6 +118,16 @@ if "CountryRank" not in df.columns:
     mancity_row = df[df["Club"] == "Man City"].iloc[0]
 
 # ------------------------------------------------------------------
+# MAIN title probability card (under hero)
+# ------------------------------------------------------------------
+leader_elo = df[df["Country"] == "ENG"].iloc[0]["Elo"]
+title_prob = 1 / (1 + 10 ** ((leader_elo - mancity_row["Elo"]) / 100))
+
+left_pad, center_col, right_pad = st.columns([1, 2, 1])
+with center_col:
+    st.metric("Estimated Premier League Title Probability", f"{title_prob:.1%}")
+
+# ------------------------------------------------------------------
 # Metrics row
 # ------------------------------------------------------------------
 col1, col2, col3, col4 = st.columns(4)
@@ -132,7 +141,7 @@ with col4:
     st.metric("Competition Level", mancity_row['Level'])
 
 # ------------------------------------------------------------------
-# Premier League top 10
+# Premier League Top 10
 # ------------------------------------------------------------------
 st.subheader("Premier League Top 10 (Elo)")
 
@@ -153,14 +162,6 @@ st.bar_chart(
 )
 
 # ------------------------------------------------------------------
-# Estimated title probability using classic Elo formula
-# ------------------------------------------------------------------
-leader_elo = df[df["Country"] == "ENG"].iloc[0]["Elo"]
-title_prob = 1 / (1 + 10 ** ((leader_elo - mancity_row["Elo"]) / 100))
-
-st.metric("Estimated Premier League Title Probability", f"{title_prob:.1%}")
-
-# ------------------------------------------------------------------
 # Upcoming matches + Elo-based predictions (football-data.org)
 # ------------------------------------------------------------------
 st.subheader("Next Manchester City Matches – Elo-based Win Probability")
@@ -177,15 +178,9 @@ CLUB_NAME_MAP = {
     "Brighton & Hove Albion FC": "Brighton",
     "Crystal Palace FC": "Crystal Palace",
     "AFC Bournemouth": "Bournemouth",
-    # extend if you want more mapped
 }
 
 def get_next_city_matches():
-    """
-    Uses free-tier football-data.org API.
-    Requires an API key in Streamlit secrets as FOOTBALL_DATA_API_KEY.
-    Returns a pandas DataFrame or (None, reason).
-    """
     api_key = st.secrets.get("FOOTBALL_DATA_API_KEY", None)
     if not api_key:
         return None, "no_key"
@@ -227,7 +222,6 @@ def get_next_city_matches():
         if opp_elo_name and (df["Club"] == opp_elo_name).any():
             opp_elo = float(df.loc[df["Club"] == opp_elo_name, "Elo"].iloc[0])
 
-            # Simple Elo win probability with home advantage
             home_adv = 100
             city_elo = float(mancity_row["Elo"])
 
@@ -272,12 +266,11 @@ def show_fixtures_table(df_to_show, label=""):
         )
 
 if fixtures_df is not None:
-    # Tabs for main competitions: PL, UCL, FA Cup, League Cup, Other
     main_comps = [
         "Premier League",
         "UEFA Champions League",
         "FA Cup",
-        "League Cup",           # football-data may use EFL Cup / League Cup naming
+        "League Cup",
         "EFL Cup",
     ]
 
@@ -295,11 +288,9 @@ if fixtures_df is not None:
 
     tabs = st.tabs(tab_labels)
 
-    # All fixtures
     with tabs[0]:
         show_fixtures_table(fixtures_df, "all competitions")
 
-    # Individual competitions
     tab_index = 1
     for comp_name in comp_tabs:
         with tabs[tab_index]:
@@ -309,7 +300,6 @@ if fixtures_df is not None:
             )
         tab_index += 1
 
-    # Other competitions
     if "Other" in tab_labels:
         with tabs[-1]:
             other_df = fixtures_df[
