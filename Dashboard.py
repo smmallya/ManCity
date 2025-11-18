@@ -118,27 +118,25 @@ if "CountryRank" not in df.columns:
     mancity_row = df[df["Club"] == "Man City"].iloc[0]
 
 # ------------------------------------------------------------------
-# MAIN title probability card (under hero)
+# Title probability + key metrics in a single row
 # ------------------------------------------------------------------
+
+# Leader Elo within England (highest Elo)
 leader_elo = df[df["Country"] == "ENG"].iloc[0]["Elo"]
 title_prob = 1 / (1 + 10 ** ((leader_elo - mancity_row["Elo"]) / 100))
 
-left_pad, center_col, right_pad = st.columns([1, 2, 1])
-with center_col:
-    st.metric("Estimated Premier League Title Probability", f"{title_prob:.1%}")
+# Premier League rank = Elo rank within England
+prem_rank = int(mancity_row["CountryRank"])
 
-# ------------------------------------------------------------------
-# Metrics row
-# ------------------------------------------------------------------
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.metric("Current Elo Rating", f"{int(mancity_row['Elo'])}")
+    st.metric("Premier League Title Probability", f"{title_prob:.1%}")
 with col2:
-    st.metric("World Rank", f"#{mancity_row['Rank']}")
+    st.metric("Current Elo Rating", f"{int(mancity_row['Elo'])}")
 with col3:
-    st.metric("England Rank", f"#{int(mancity_row['CountryRank'])}")
+    st.metric("World Elo Rank", f"#{int(mancity_row['Rank'])}")
 with col4:
-    st.metric("Competition Level", mancity_row['Level'])
+    st.metric("Premier League Elo Rank", f"#{prem_rank}")
 
 # ------------------------------------------------------------------
 # Premier League Top 10
