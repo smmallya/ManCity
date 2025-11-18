@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 import math
+from openai import OpenAI  # pip install openai
 
 # ------------------------------------------------------------------
 # Page + Man City styling
@@ -61,6 +62,36 @@ st.markdown(
         box-shadow: 0 1px 6px rgba(15,23,42,0.06);
         padding: 0.25rem 0.25rem 0.5rem 0.25rem;
     }
+
+    /* Flashy AI summary card */
+    .ai-summary-card {
+        border-radius: 1.1rem;
+        padding: 1.1rem 1.25rem;
+        margin-bottom: 1rem;
+        background: radial-gradient(circle at top left, #6CABDD 0, #00285E 40%, #000000 100%);
+        color: #fdfdfd;
+        box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+    }
+
+    .ai-summary-title {
+        font-weight: 700;
+        font-size: 0.95rem;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        opacity: 0.9;
+        margin-bottom: 0.2rem;
+    }
+
+    .ai-summary-matchline {
+        font-weight: 600;
+        font-size: 1.0rem;
+        margin-bottom: 0.35rem;
+    }
+
+    .ai-summary-body {
+        font-size: 0.95rem;
+        line-height: 1.4;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -102,7 +133,7 @@ if df is None:
     st.error("ClubElo data temporarily unavailable – trying again in a few hours usually fixes it.")
     st.stop()
 
-# Safe lookup – will never crash
+# Man City row
 mancity_row = df[df["Club"] == "Man City"]
 if mancity_row.empty:
     st.error("Manchester City not found in latest data – ClubElo format may have changed.")
@@ -133,6 +164,147 @@ with col3:
     st.metric("World Elo Rank", f"#{int(mancity_row['Rank'])}")
 with col4:
     st.metric("Premier League Elo Rank", f"#{prem_rank}")
+
+# ------------------------------------------------------------------
+# AI viral summaries for last 2 matches (prominent section)
+# ------------------------------------------------------------------
+st.subheader("🔥 Last 2 Matches – Viral AI Recap")
+
+@st.cache_data(ttl=6 * 3600, show_spinner="Loading recent matches...")
+def get_recent_city_matches(limit=2):
+    api_key = st.secrets.get("FOOTBALL_DATA_API_KEY", None)
+    if not api_key:
+        return None, "no_key"
+
+    url = "https://api.football-data.org/v4/teams/65/matches"
+    params = {"status": "FINISHED", "limit": limit}
+    headers = {"X-Auth-Token": api_key}
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=10)
+        if r.status_code != 200:
+            return None, f"http_{r.status_code}"
+        data = r.json()
+    except Exception:
+        return None, "network"
+
+    matches = data.get("matches", [])
+    if not matches:
+        return None, "no_matches"
+
+    rows = []
+    for m in matches:
+        utc_date = m["utcDate"]
+        dt = datetime.fromisoformat(utc_date.replace("Z", "+00:00"))
+        date_str = dt.strftime("%Y-%m-%d")
+        nice_dt = dt.strftime("%Y-%m-%d %H:%M")
+
+        home = m["homeTeam"]["name"]
+        away = m["awayTeam"]["name"]
+        comp = m["competition"]["name"]
+
+        home_goals = m["score"]["fullTime"]["home"]
+        away_goals = m["score"]["fullTime"]["away"]
+
+        if m["homeTeam"]["id"] == 65:
+            venue = "Home"
+            city_goals = home_goals
+            opp_goals = away_goals
+            opponent = away
+        else:
+            venue = "Away"
+            city_goals = away_goals
+            opp_goals = home_goals
+            opponent = home
+
+        scoreline = f"{city_goals}-{opp_goals}"
+
+        rows.append(
+            {
+                "Date": date_str,
+                "DateTime": nice_dt,
+                "Competition": comp,
+                "Venue": venue,
+                "Opponent": opponent,
+                "Scoreline": scoreline,
+                "CityGoals": city_goals,
+                "OppGoals": opp_goals,
+            }
+        )
+
+    return pd.DataFrame(rows), None
+
+@st.cache_data(ttl=3600)
+def generate_match_summary(scoreline, opponent, competition, venue, date_str):
+    api_key = st.secrets.get("OPENAI_API_KEY")
+    if not api_key:
+        return "Summary unavailable (OpenAI API key not configured in Streamlit secrets)."
+
+    client = OpenAI(api_key=api_key)
+
+    prompt = f"""
+You are writing a short, funny, social-media-ready recap for Manchester City fans.
+
+Match: Manchester City vs {opponent}
+Competition: {competition}
+Result: {scoreline}
+Venue: {venue}
+Date: {date_str}
+
+Guidelines:
+- Max 3 sentences.
+- Make it energetic, witty, and a bit cheeky, but respectful.
+- Highlight City's dominance or key comeback moment based purely on the scoreline.
+- Imagine this going viral on football Twitter: it should be punchy and quotable.
+- Do NOT add hashtags or emojis; text only.
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",   # adjust model name if needed
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.9,
+            max_tokens=120,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Summary failed: {e}"
+
+recent_df, recent_err = get_recent_city_matches()
+
+if recent_df is not None:
+    for _, row in recent_df.iterrows():
+        summary_text = generate_match_summary(
+            row["Scoreline"],
+            row["Opponent"],
+            row["Competition"],
+            row["Venue"],
+            row["DateTime"],
+        )
+
+        st.markdown(
+            f"""
+            <div class="ai-summary-card">
+                <div class="ai-summary-title">AI Match Recap</div>
+                <div class="ai-summary-matchline">
+                    {row['DateTime']} • {row['Competition']} • {row['Venue']} vs {row['Opponent']} • Final: Man City {row['CityGoals']}-{row['OppGoals']}
+                </div>
+                <div class="ai-summary-body">
+                    {summary_text}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+else:
+    if recent_err == "no_key":
+        st.info(
+            "To see AI recaps for the last matches, add a free API key from football-data.org "
+            "to Streamlit secrets as `FOOTBALL_DATA_API_KEY` and an OpenAI key as `OPENAI_API_KEY`."
+        )
+    elif recent_err == "no_matches":
+        st.info("No finished Manchester City matches found.")
+    else:
+        st.warning("Unable to load recent match details for AI recaps. Try again later.")
 
 # ------------------------------------------------------------------
 # Premier League Top 10
@@ -249,7 +421,6 @@ def get_next_city_matches():
 
     return pd.DataFrame(rows), None
 
-
 fixtures_df, fixtures_err = get_next_city_matches()
 
 def show_fixtures_table(df_to_show, label=""):
@@ -317,142 +488,9 @@ else:
         st.warning("Unable to load fixtures right now. Please try again later.")
 
 # ------------------------------------------------------------------
-# Last 2 matches – ratings & reactions (links only, no scraping)
-# ------------------------------------------------------------------
-st.subheader("Last 2 Matches – Ratings & Reactions")
-
-@st.cache_data(ttl=6 * 3600, show_spinner="Loading recent matches...")
-def get_recent_city_matches(limit=2):
-    """
-    Last finished matches from football-data.org
-    """
-    api_key = st.secrets.get("FOOTBALL_DATA_API_KEY", None)
-    if not api_key:
-        return None, "no_key"
-
-    url = "https://api.football-data.org/v4/teams/65/matches"
-    params = {"status": "FINISHED", "limit": limit}
-    headers = {"X-Auth-Token": api_key}
-    try:
-        r = requests.get(url, headers=headers, params=params, timeout=10)
-        if r.status_code != 200:
-            return None, f"http_{r.status_code}"
-        data = r.json()
-    except Exception:
-        return None, "network"
-
-    matches = data.get("matches", [])
-    if not matches:
-        return None, "no_matches"
-
-    rows = []
-    for m in matches:
-        utc_date = m["utcDate"]
-        dt = datetime.fromisoformat(utc_date.replace("Z", "+00:00"))
-        date_str = dt.strftime("%Y-%m-%d %H:%M")
-
-        home = m["homeTeam"]["name"]
-        away = m["awayTeam"]["name"]
-        comp = m["competition"]["name"]
-        match_id = m["id"]
-
-        home_goals = m["score"]["fullTime"]["home"]
-        away_goals = m["score"]["fullTime"]["away"]
-
-        if m["homeTeam"]["id"] == 65:
-            venue = "Home"
-            city_goals = home_goals
-            opp_goals = away_goals
-            opponent = away
-        else:
-            venue = "Away"
-            city_goals = away_goals
-            opp_goals = home_goals
-            opponent = home
-
-        result_str = f"{city_goals}-{opp_goals}"
-        rows.append(
-            {
-                "MatchID": match_id,
-                "Date (UTC)": date_str,
-                "Competition": comp,
-                "Venue": venue,
-                "Opponent": opponent,
-                "CityGoals": city_goals,
-                "OppGoals": opp_goals,
-                "Scoreline": result_str,
-            }
-        )
-
-    return pd.DataFrame(rows), None
-
-
-recent_df, recent_err = get_recent_city_matches()
-
-# Map: our match key -> (ratings_url, report_url)
-# You can update this dict as new games are played.
-MATCH_LINKS = {
-    # Example:
-    # "123456": {
-    #     "ratings": "https://www.whoscored.com/Matches/123456/LiveStatistics",
-    #     "report": "https://www.mancity.com/news/mens/match-report-link"
-    # }
-}
-
-if recent_df is not None:
-    tab_titles = [
-        f"{row['Scoreline']} vs {row['Opponent']} ({row['Competition']})"
-        for _, row in recent_df.iterrows()
-    ]
-    match_tabs = st.tabs(tab_titles)
-
-    for (idx, row), tab in zip(recent_df.iterrows(), match_tabs):
-        with tab:
-            st.write(f"**Date (UTC):** {row['Date (UTC)']}")
-            st.write(f"**Competition:** {row['Competition']}")
-            st.write(f"**Venue:** {row['Venue']}")
-            st.write(
-                f"**Result:** Manchester City {row['CityGoals']} – {row['OppGoals']} {row['Opponent']}"
-            )
-
-            link_info = MATCH_LINKS.get(str(row["MatchID"]), {})
-
-            ratings_url = link_info.get("ratings")
-            report_url = link_info.get("report")
-
-            st.markdown("---")
-            st.write("### Player ratings & match reaction")
-
-            cols_rr = st.columns(2)
-            with cols_rr[0]:
-                if ratings_url:
-                    st.link_button("View detailed player ratings", ratings_url)
-                else:
-                    st.caption(
-                        "Player ratings link not configured yet – add a WhoScored/SofaScore URL in `MATCH_LINKS`."
-                    )
-            with cols_rr[1]:
-                if report_url:
-                    st.link_button("Read match report & quotes", report_url)
-                else:
-                    st.caption(
-                        "Match report link not configured yet – add a ManCity/BBC article URL in `MATCH_LINKS`."
-                    )
-else:
-    if recent_err == "no_key":
-        st.info(
-            "To see last match details, add a free API key from football-data.org "
-            "to Streamlit secrets as `FOOTBALL_DATA_API_KEY`."
-        )
-    elif recent_err == "no_matches":
-        st.info("No finished Manchester City matches found in the fixture API.")
-    else:
-        st.warning("Unable to load recent match details right now. Please try again later.")
-
-# ------------------------------------------------------------------
 # Footnote
 # ------------------------------------------------------------------
 st.caption(
     f"Data from { (datetime.utcnow() - timedelta(days=4)).strftime('%Y-%m-%d') } → today • "
-    "Elo source: clubelo.com • Fixtures & results: football-data.org"
+    "Elo source: clubelo.com • Fixtures & results: football-data.org • AI summaries: OpenAI"
 )
