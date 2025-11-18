@@ -233,13 +233,15 @@ def get_recent_city_matches(limit=2):
 
     return pd.DataFrame(rows), None
 
+from openai import OpenAI, AuthenticationError
+
 @st.cache_data(ttl=3600)
 def generate_match_summary(scoreline, opponent, competition, venue, date_str):
     api_key = st.secrets.get("OPENAI_API_KEY")
     if not api_key:
-        return "Summary unavailable (OpenAI API key not configured in Streamlit secrets)."
+        return "AI recap unavailable (OpenAI API key not configured)."
 
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(api_key=api_key.strip())
 
     prompt = f"""
 You are writing a short, funny, social-media-ready recap for Manchester City fans.
@@ -260,14 +262,20 @@ Guidelines:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",   # adjust model name if needed
+            model="gpt-4.1-mini",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.9,
             max_tokens=120,
         )
         return response.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Summary failed: {e}"
+
+    except AuthenticationError:
+        # Key is wrong / revoked / no API access
+        return "AI recap unavailable (authentication error with OpenAI API key)."
+
+    except Exception:
+        # Any other transient error
+        return "AI recap temporarily unavailable. Try again later."
 
 recent_df, recent_err = get_recent_city_matches()
 
