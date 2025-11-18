@@ -92,7 +92,7 @@ def get_latest_elo():
             response = requests.get(url, timeout=10)
             if response.status_code == 200 and "Club" in response.text:
                 return pd.read_csv(url)
-        except:
+        except Exception:
             continue
     return None
 
@@ -120,12 +120,8 @@ if "CountryRank" not in df.columns:
 # ------------------------------------------------------------------
 # Title probability + key metrics in a single row
 # ------------------------------------------------------------------
-
-# Leader Elo within England (highest Elo)
 leader_elo = df[df["Country"] == "ENG"].iloc[0]["Elo"]
 title_prob = 1 / (1 + 10 ** ((leader_elo - mancity_row["Elo"]) / 100))
-
-# Premier League rank = Elo rank within England
 prem_rank = int(mancity_row["CountryRank"])
 
 col1, col2, col3, col4 = st.columns(4)
@@ -179,6 +175,9 @@ CLUB_NAME_MAP = {
 }
 
 def get_next_city_matches():
+    """
+    Upcoming fixtures from football-data.org
+    """
     api_key = st.secrets.get("FOOTBALL_DATA_API_KEY", None)
     if not api_key:
         return None, "no_key"
@@ -318,9 +317,142 @@ else:
         st.warning("Unable to load fixtures right now. Please try again later.")
 
 # ------------------------------------------------------------------
+# Last 2 matches – ratings & reactions (links only, no scraping)
+# ------------------------------------------------------------------
+st.subheader("Last 2 Matches – Ratings & Reactions")
+
+@st.cache_data(ttl=6 * 3600, show_spinner="Loading recent matches...")
+def get_recent_city_matches(limit=2):
+    """
+    Last finished matches from football-data.org
+    """
+    api_key = st.secrets.get("FOOTBALL_DATA_API_KEY", None)
+    if not api_key:
+        return None, "no_key"
+
+    url = "https://api.football-data.org/v4/teams/65/matches"
+    params = {"status": "FINISHED", "limit": limit}
+    headers = {"X-Auth-Token": api_key}
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=10)
+        if r.status_code != 200:
+            return None, f"http_{r.status_code}"
+        data = r.json()
+    except Exception:
+        return None, "network"
+
+    matches = data.get("matches", [])
+    if not matches:
+        return None, "no_matches"
+
+    rows = []
+    for m in matches:
+        utc_date = m["utcDate"]
+        dt = datetime.fromisoformat(utc_date.replace("Z", "+00:00"))
+        date_str = dt.strftime("%Y-%m-%d %H:%M")
+
+        home = m["homeTeam"]["name"]
+        away = m["awayTeam"]["name"]
+        comp = m["competition"]["name"]
+        match_id = m["id"]
+
+        home_goals = m["score"]["fullTime"]["home"]
+        away_goals = m["score"]["fullTime"]["away"]
+
+        if m["homeTeam"]["id"] == 65:
+            venue = "Home"
+            city_goals = home_goals
+            opp_goals = away_goals
+            opponent = away
+        else:
+            venue = "Away"
+            city_goals = away_goals
+            opp_goals = home_goals
+            opponent = home
+
+        result_str = f"{city_goals}-{opp_goals}"
+        rows.append(
+            {
+                "MatchID": match_id,
+                "Date (UTC)": date_str,
+                "Competition": comp,
+                "Venue": venue,
+                "Opponent": opponent,
+                "CityGoals": city_goals,
+                "OppGoals": opp_goals,
+                "Scoreline": result_str,
+            }
+        )
+
+    return pd.DataFrame(rows), None
+
+
+recent_df, recent_err = get_recent_city_matches()
+
+# Map: our match key -> (ratings_url, report_url)
+# You can update this dict as new games are played.
+MATCH_LINKS = {
+    # Example:
+    # "123456": {
+    #     "ratings": "https://www.whoscored.com/Matches/123456/LiveStatistics",
+    #     "report": "https://www.mancity.com/news/mens/match-report-link"
+    # }
+}
+
+if recent_df is not None:
+    tab_titles = [
+        f"{row['Scoreline']} vs {row['Opponent']} ({row['Competition']})"
+        for _, row in recent_df.iterrows()
+    ]
+    match_tabs = st.tabs(tab_titles)
+
+    for (idx, row), tab in zip(recent_df.iterrows(), match_tabs):
+        with tab:
+            st.write(f"**Date (UTC):** {row['Date (UTC)']}")
+            st.write(f"**Competition:** {row['Competition']}")
+            st.write(f"**Venue:** {row['Venue']}")
+            st.write(
+                f"**Result:** Manchester City {row['CityGoals']} – {row['OppGoals']} {row['Opponent']}"
+            )
+
+            link_info = MATCH_LINKS.get(str(row["MatchID"]), {})
+
+            ratings_url = link_info.get("ratings")
+            report_url = link_info.get("report")
+
+            st.markdown("---")
+            st.write("### Player ratings & match reaction")
+
+            cols_rr = st.columns(2)
+            with cols_rr[0]:
+                if ratings_url:
+                    st.link_button("View detailed player ratings", ratings_url)
+                else:
+                    st.caption(
+                        "Player ratings link not configured yet – add a WhoScored/SofaScore URL in `MATCH_LINKS`."
+                    )
+            with cols_rr[1]:
+                if report_url:
+                    st.link_button("Read match report & quotes", report_url)
+                else:
+                    st.caption(
+                        "Match report link not configured yet – add a ManCity/BBC article URL in `MATCH_LINKS`."
+                    )
+else:
+    if recent_err == "no_key":
+        st.info(
+            "To see last match details, add a free API key from football-data.org "
+            "to Streamlit secrets as `FOOTBALL_DATA_API_KEY`."
+        )
+    elif recent_err == "no_matches":
+        st.info("No finished Manchester City matches found in the fixture API.")
+    else:
+        st.warning("Unable to load recent match details right now. Please try again later.")
+
+# ------------------------------------------------------------------
 # Footnote
 # ------------------------------------------------------------------
 st.caption(
     f"Data from { (datetime.utcnow() - timedelta(days=4)).strftime('%Y-%m-%d') } → today • "
-    "Elo source: clubelo.com • Fixtures: football-data.org"
+    "Elo source: clubelo.com • Fixtures & results: football-data.org"
 )
