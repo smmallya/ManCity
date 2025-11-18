@@ -235,46 +235,36 @@ def get_recent_city_matches(limit=2):
 
 from openai import OpenAI, AuthenticationError
 
+import google.generativeai as genai
+
 @st.cache_data(ttl=3600)
 def generate_match_summary(scoreline, opponent, competition, venue, date_str):
-    api_key = st.secrets.get("OPENAI_API_KEY")
+    api_key = st.secrets.get("GEMINI_API_KEY")
     if not api_key:
-        return "AI recap unavailable (OpenAI API key not configured)."
+        return "AI recap unavailable (No Gemini API key configured)."
 
-    client = OpenAI(api_key=api_key.strip())
+    genai.configure(api_key=api_key)
 
     prompt = f"""
-You are writing a short, funny, social-media-ready recap for Manchester City fans.
-
+Write a short, funny viral-style Manchester City match recap.
 Match: Manchester City vs {opponent}
 Competition: {competition}
 Result: {scoreline}
 Venue: {venue}
 Date: {date_str}
 
-Guidelines:
+Rules:
 - Max 3 sentences.
-- Make it energetic, witty, and a bit cheeky, but respectful.
-- Highlight City's dominance or key comeback moment based purely on the scoreline.
-- Imagine this going viral on football Twitter: it should be punchy and quotable.
-- Do NOT add hashtags or emojis; text only.
+- Make it witty, clever, and slightly cheeky.
+- Reference City dominance or chaos based only on the scoreline.
+- Tone: perfect for football Twitter banter. No emojis, no hashtags.
 """
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.9,
-            max_tokens=120,
-        )
-        return response.choices[0].message.content.strip()
-
-    except AuthenticationError:
-        # Key is wrong / revoked / no API access
-        return "AI recap unavailable (authentication error with OpenAI API key)."
-
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(prompt)
+        return response.text.strip()
     except Exception:
-        # Any other transient error
         return "AI recap temporarily unavailable. Try again later."
 
 recent_df, recent_err = get_recent_city_matches()
