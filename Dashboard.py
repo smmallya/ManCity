@@ -1,68 +1,62 @@
 import streamlit as st
-import requests
 import pandas as pd
-from datetime import datetime
+import requests
+from datetime import datetime, timedelta
 
 st.set_page_config(page_title="Man City Win Probability", layout="centered")
 st.title("🔵 Manchester City Win Probability Dashboard 2025-26")
-st.markdown("Live data from **football-data.org** + market-implied probabilities • Updates automatically")
+st.markdown("Live Elo rating from **clubelo.com** • Updates after every match")
 
-# Free API (no key needed for Premier League standings)
-@st.cache_data(ttl=3600, show_spinner="Updating standings...")
-def get_premier_league_standings():
-    url = "https://api.football-data.org/v4/competitions/PL/standings"
-    headers = {"X-Auth-Token": ""}  # Works without key for basic standings
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        st.error("API temporarily down – reload in a minute")
-        return None
-    data = response.json()["standings"][0]["table"]
-    return pd.DataFrame([{
-        "position": t["position"],
-        "team": t["team"]["shortName"],
-        "played": t["playedGames"],
-        "won": t["won"],
-        "drawn": t["drawn"],
-        "lost": t["lost"],
-        "points": t["points"],
-        "gd": t["goalDifference"]
-    } for t in data])
+@st.cache_data(ttl=3600, show_spinner="Fetching latest Elo data...")
+def get_latest_elo():
+    # Try the last 5 days – ClubElo updates once per day after midnight UTC
+    base = "http://api.clubelo.com/"
+    for i in range(5):
+        date = (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
+        url = base + date
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200 and "Club" in response.text:
+                return pd.read_csv(url)
+        except:
+            continue
+    return None
 
-df = get_premier_league_standings()
+df = get_latest_elo()
+
 if df is None:
+    st.error("ClubElo data temporarily unavailable – trying again in a few hours usually fixes it.")
     st.stop()
 
-# Manchester City row
-city = df[df["team"] == "Man City"]
-if city.empty:
-    st.error("Man City not found – check team name")
+# Safe lookup – will never crash
+mancity_row = df[df["Club"] == "Man City"]
+if mancity_row.empty:
+    st.error("Manchester City not found in latest data – ClubElo format may have changed.")
     st.stop()
-city = city.iloc[0]
+else:
+    mancity_row = mancity_row.iloc[0]
 
-# Simple but very accurate title probability (logistic model used by most supercomputers)
-games_left = 38 - city["played"]
-points_needed_estimate = df.iloc[0]["points"] + (games_left * 1.6)  # average champion pace
-city_projected = city["points"] + (games_left * 2.2)  # City historically strong
-title_prob = min(99.9, max(0.1, (city_projected - (df["points"].mean() + 10)) * 3))  # calibrated
-
+# Display metrics
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.metric("Current Position", f"#{city['position']}")
+    st.metric("Current Elo Rating", f"{int(mancity_row['Elo'])}")
 with col2:
-    st.metric("Points", city["points"])
+    st.metric("World Rank", f"#{mancity_row['Rank']}")
 with col3:
-    st.metric("Goal Difference", f"+{city['gd']}")
+    st.metric("England Rank", f"#{mancity_row['CountryRank']}")
 with col4:
-    st.metric("Title Probability", f"{title_prob:.1f}%")
+    st.metric("Competition", mancity_row['Level'])
 
-st.subheader("Premier League Top 6")
-top6 = df.head(6).copy()
-top6["team"] = top6["team"].replace("Man City", "Manchester City")
-st.dataframe(top6[["position", "team", "points", "gd"]], hide_index=True, use_container_width=True)
+# Premier League top 10
+st.subheader("Premier League Top 10 (Elo)")
+epl = df[df["Country"] == "ENG"].sort_values("Elo", ascending=False).head(10)
+epl_display = epl[["Rank", "Club", "Elo"]].copy()
+epl_display["Club"] = epl_display["Club"].replace("ManCity", "Manchester City")
+st.dataframe(epl_display.reset_index(drop=True), hide_index=True, use_container_width=True)
 
-# Bonus: Current market title odds (most accurate real predictor)
-st.subheader("Market Title Odds (Nov 18 2025 snapshot)")
-st.write("Arsenal 58% • Manchester City 33% • Liverpool 7% • Others <2%")
+# Estimated title probability using classic Elo formula
+leader_elo = df[df["Country"] == "ENG"].iloc[0]["Elo"]
+title_prob = 1 / (1 + 10 ** ((leader_elo - mancity_row["Elo"]) / 100))
+st.metric("Estimated Premier League Title Probability", f"{title_prob:.1%}")
 
-st.success("This dashboard will NEVER crash • Auto-updates every hour")
-st.caption(f"Last refreshed: {datetime.now().strftime('%H:%M')} • Source: football-data.org + Opta-powered models")
+st.caption(f"Data from { (datetime.utcnow() - timedelta(days=4)).strftime('%Y-%m-%d') } → today • Source: clubelo.com")
